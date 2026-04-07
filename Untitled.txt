@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Neon Dash | Play Online</title>
+    <style>
+        :root { --neon: #00ffff; --bg: #050505; --accent: #ff0055; }
+        * { box-sizing: border-box; user-select: none; -webkit-tap-highlight-color: transparent; }
+        
+        body { 
+            margin: 0; background: var(--bg); color: white; 
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            display: flex; justify-content: center; align-items: center; 
+            height: 100vh; overflow: hidden;
+        }
+
+        #game-wrapper {
+            position: relative; width: 100%; max-width: 900px; aspect-ratio: 16/9;
+            background: #000; border: 3px solid #222; overflow: hidden;
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+        }
+
+        canvas { width: 100%; height: 100%; display: block; }
+
+        /* UI Overlays */
+        #ui-layer {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none; z-index: 10;
+        }
+
+        #progress-container {
+            position: absolute; top: 0; left: 0; width: 100%; height: 6px;
+            background: rgba(255,255,255,0.05);
+        }
+        #progress-bar { width: 0%; height: 100%; background: var(--neon); box-shadow: 0 0 15px var(--neon); }
+
+        #stats {
+            position: absolute; top: 20px; width: 100%; text-align: center;
+            font-size: 1.5rem; font-weight: 900; letter-spacing: 2px;
+            text-shadow: 0 0 10px rgba(0,255,255,0.5);
+        }
+
+        #menu-overlay {
+            position: absolute; inset: 0; background: rgba(0,0,0,0.8);
+            display: flex; flex-direction: column; justify-content: center;
+            align-items: center; z-index: 20; pointer-events: all;
+        }
+
+        h1 { font-size: 3rem; margin: 0; color: var(--neon); text-transform: uppercase; font-style: italic; }
+        .btn {
+            margin-top: 20px; padding: 15px 40px; font-size: 1.2rem;
+            background: var(--neon); color: black; border: none;
+            border-radius: 5px; cursor: pointer; font-weight: bold;
+            transition: transform 0.1s, box-shadow 0.1s;
+        }
+        .btn:active { transform: scale(0.95); }
+
+        /* Responsive */
+        @media (max-width: 600px) { h1 { font-size: 1.5rem; } .btn { padding: 10px 20px; } }
+    </style>
+</head>
+<body>
+
+    <div id="game-wrapper">
+        <canvas id="gameCanvas"></canvas>
+        
+        <div id="ui-layer">
+            <div id="progress-container"><div id="progress-bar"></div></div>
+            <div id="stats">0%</div>
+        </div>
+
+        <div id="menu-overlay">
+            <h1>Neon Dash</h1>
+            <button class="btn" onclick="startGame()">TAP TO START</button>
+            <p style="margin-top: 15px; opacity: 0.5;">SPACE or TAP to Jump</p>
+        </div>
+    </div>
+
+<script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const progressBar = document.getElementById('progress-bar');
+    const statsText = document.getElementById('stats');
+    const menu = document.getElementById('menu-overlay');
+
+    // Virtual Resolution (Fixed Aspect Ratio)
+    canvas.width = 1280;
+    canvas.height = 720;
+
+    // --- GAME ENGINE ---
+    const GAME = {
+        state: 'MENU',
+        gravity: 1.1,
+        jumpForce: -21,
+        speed: 12,
+        groundY: 620,
+        playerX: 250,
+        distance: 0,
+        shake: 0,
+        hue: 190,
+        levelLength: 8000 // Total distance to win
+    };
+
+    const player = {
+        y: 0, dy: 0, rot: 0, size: 55, trail: [],
+        alive: true,
+        update() {
+            this.dy += GAME.gravity;
+            this.y += this.dy;
+
+            // Ground Collision
+            if (this.y > GAME.groundY - this.size) {
+                this.y = GAME.groundY - this.size;
+                this.dy = 0;
+                this.rot = Math.round(this.rot / 90) * 90;
+            } else {
+                this.rot += 7;
+            }
+        }
+    };
+
+    // Level Mapping [X-coordinate, type]
+    const LEVEL = [
+        [1000, 1], [1500, 1], [2100, 2], [2800, 1], [3200, 3],
+        [3800, 1], [4200, 2], [5000, 3], [5800, 2], [6500, 3], [7200, 1]
+    ];
+    let obstacles = [];
+    let particles = [];
+
+    function startGame() {
+        GAME.state = 'PLAYING';
+        GAME.distance = 0;
+        GAME.hue = 190;
+        player.y = GAME.groundY - player.size;
+        player.dy = 0;
+        player.alive = true;
+        player.trail = [];
+        obstacles = LEVEL.map(o => ({ x: o[0], type: o[1] }));
+        menu.style.display = 'none';
+    }
+
+    function die() {
+        player.alive = false;
+        GAME.state = 'DEAD';
+        GAME.shake = 25;
+        // Create explosion
+        for(let i=0; i<30; i++) {
+            particles.push({
+                x: GAME.playerX + 25, y: player.y + 25,
+                dx: (Math.random()-0.5)*20, dy: (Math.random()-0.5)*20,
+                life: 1, color: 'cyan'
+            });
+        }
+        setTimeout(startGame, 1000);
+    }
+
+    function update() {
+        if (GAME.state !== 'PLAYING') {
+            particles.forEach((p, i) => {
+                p.x += p.dx; p.y += p.dy; p.life -= 0.02;
+                if (p.life <= 0) particles.splice(i, 1);
+            });
+            return;
+        }
+
+        GAME.distance += GAME.speed;
+        GAME.hue = (GAME.hue + 0.1) % 360;
+        if (GAME.shake > 0) GAME.shake *= 0.85;
+
+        player.update();
+
+        // Trail Logic
+        player.trail.push({ y: player.y, rot: player.rot });
+        if (player.trail.length > 12) player.trail.shift();
+
+        // Collision & Progress
+        let progress = Math.min((GAME.distance / GAME.levelLength) * 100, 100);
+        progressBar.style.width = progress + '%';
+        statsText.innerText = Math.floor(progress) + '%';
+
+        obstacles.forEach(obs => {
+            let ox = obs.x - GAME.distance + GAME.playerX;
+            let spikeCount = obs.type;
+            
+            for (let n=0; n < spikeCount; n++) {
+                let sx = ox + (n * 55) + 15; // Hitbox padding
+                // Box collision
+                if (GAME.playerX + 45 > sx && GAME.playerX + 10 < sx + 30 &&
+                    player.y + 45 > GAME.groundY - 45) {
+                    die();
+                }
+            }
+        });
+
+        if (progress >= 100) {
+            GAME.state = 'MENU';
+            menu.style.display = 'flex';
+            menu.querySelector('h1').innerText = "LEVEL COMPLETE!";
+        }
+    }
+
+    function draw() {
+        ctx.save();
+        if (GAME.shake > 1) ctx.translate(Math.random()*GAME.shake, Math.random()*GAME.shake);
+
+        // Background
+        ctx.fillStyle = `hsl(${GAME.hue}, 30%, 5%)`;
+        ctx.fillRect(0,0, canvas.width, canvas.height);
+
+        // Grid
+        ctx.strokeStyle = `hsl(${GAME.hue}, 50%, 20%)`;
+        ctx.lineWidth = 2;
+        let gridX = (GAME.distance % 80);
+        for(let x = -gridX; x < canvas.width; x += 80) {
+            ctx.beginPath(); ctx.moveTo(x, GAME.groundY); ctx.lineTo(x, canvas.height); ctx.stroke();
+        }
+
+        // Particles
+        particles.forEach(p => {
+            ctx.globalAlpha = p.life; ctx.fillStyle = p.color;
+            ctx.fillRect(p.x, p.y, 8, 8);
+        });
+        ctx.globalAlpha = 1;
+
+        if (player.alive) {
+            // Trail
+            player.trail.forEach((t, i) => {
+                ctx.globalAlpha = i / 25; ctx.fillStyle = '#0ff';
+                ctx.save();
+                ctx.translate(GAME.playerX + 27, t.y + 27); ctx.rotate(t.rot * Math.PI/180);
+                ctx.fillRect(-27, -27, 55, 55);
+                ctx.restore();
+            });
+            ctx.globalAlpha = 1;
+
+            // Player
+            ctx.save();
+            ctx.translate(GAME.playerX + 27, player.y + 27);
+            ctx.rotate(player.rot * Math.PI/180);
+            ctx.shadowBlur = 20; ctx.shadowColor = '#0ff';
+            ctx.fillStyle = '#0ff'; ctx.fillRect(-27, -27, 55, 55);
+            ctx.strokeStyle = '#fff'; ctx.lineWidth = 4; ctx.strokeRect(-27, -27, 55, 55);
+            ctx.restore();
+        }
+
+        // Ground
+        ctx.fillStyle = '#000'; ctx.fillRect(0, GAME.groundY, canvas.width, 100);
+        ctx.strokeStyle = `hsl(${GAME.hue}, 100%, 50%)`; ctx.lineWidth = 4;
+        ctx.strokeRect(-5, GAME.groundY, canvas.width+10, 100);
+
+        // Obstacles
+        obstacles.forEach(obs => {
+            let ox = obs.x - GAME.distance + GAME.playerX;
+            if (ox < -200 || ox > canvas.width) return;
+            
+            ctx.fillStyle = '#ff0055'; ctx.shadowBlur = 15; ctx.shadowColor = '#ff0055';
+            for (let n=0; n<obs.type; n++) {
+                let sx = ox + (n*55);
+                ctx.beginPath(); ctx.moveTo(sx, GAME.groundY);
+                ctx.lineTo(sx+27, GAME.groundY-55); ctx.lineTo(sx+55, GAME.groundY);
+                ctx.fill();
+            }
+        });
+
+        ctx.restore();
+    }
+
+    function loop() {
+        update();
+        draw();
+        requestAnimationFrame(loop);
+    }
+
+    // Input Handling
+    const handleJump = () => { if (GAME.state === 'PLAYING') player.jump(); };
+    player.jump = function() {
+        if (this.y >= GAME.groundY - this.size) {
+            this.dy = GAME.jumpForce;
+        }
+    };
+
+    window.addEventListener('keydown', e => { if (e.code === 'Space') handleJump(); });
+    window.addEventListener('touchstart', e => { e.preventDefault(); handleJump(); }, {passive: false});
+
+    loop();
+</script>
+</body>
+</html>
